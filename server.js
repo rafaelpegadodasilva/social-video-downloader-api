@@ -83,12 +83,13 @@ async function handleQualities(body, response) {
 
     try {
         sourceURL = validateSourceURL(sourceURLFromBody(body));
+        const useCookies = shouldUseCookiesForRequest(body);
         console.log(`qualities: listing formats for ${safeURLForLog(sourceURL)}`);
         const formats = await runCommand(
             tools.ytDLP,
             [
                 "--no-warnings",
-                ...ytDLPCookieArgs(),
+                ...ytDLPCookieArgs(useCookies),
                 "-F",
                 "--no-playlist",
                 sourceURL
@@ -111,6 +112,7 @@ async function handleQualities(body, response) {
 function handleCreateDownload(body, request, response) {
     const sourceURL = validateSourceURL(sourceURLFromBody(body));
     const type = body.type === "audio" ? "audio" : "video";
+    const useCookies = shouldUseCookiesForRequest(body);
     const qualityId = typeof body.qualityId === "string" && body.qualityId.length > 0
         ? clampQualitySelector(body.qualityId)
         : videoFormatSelector(maxVideoHeight);
@@ -133,7 +135,7 @@ function handleCreateDownload(body, request, response) {
         "--no-playlist",
         "--newline",
         "--restrict-filenames",
-        ...ytDLPCookieArgs(),
+        ...ytDLPCookieArgs(useCookies),
         "--ffmpeg-location",
         path.dirname(tools.ffmpeg),
         "-o",
@@ -442,6 +444,17 @@ function prepareCookieFile() {
         return explicitPath;
     }
 
+    const secretFileCandidates = [
+        "/etc/secrets/youtube-cookies.txt",
+        "/etc/secrets/yt-dlp-cookies.txt",
+        "/etc/secrets/cookies.txt"
+    ];
+    for (const candidate of secretFileCandidates) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
     const encodedCookies = process.env.YTDLP_COOKIES_BASE64;
     const plainCookies = process.env.YTDLP_COOKIES;
     if (!encodedCookies && !plainCookies) {
@@ -456,8 +469,12 @@ function prepareCookieFile() {
     return outputPath;
 }
 
-function ytDLPCookieArgs() {
-    return cookieFilePath ? ["--cookies", cookieFilePath] : [];
+function shouldUseCookiesForRequest(body) {
+    return body && body.useBrowserCookies === true;
+}
+
+function ytDLPCookieArgs(useCookies) {
+    return useCookies && cookieFilePath ? ["--cookies", cookieFilePath] : [];
 }
 
 function resolveTools() {
