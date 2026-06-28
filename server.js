@@ -12,7 +12,7 @@ const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobsDirectory = path.join(downloadsDirectory, ".jobs");
-const serverVersion = "2026-06-28-1080-720-fallback";
+const serverVersion = "2026-06-28-native-no-convert";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
@@ -103,6 +103,7 @@ function handleCreateDownload(body, request, response) {
     const sourceURL = validateSourceURL(sourceURLFromBody(body));
     const type = body.type === "audio" ? "audio" : "video";
     const useCookies = shouldUseCookiesForRequest(body);
+    const makeCompatible = body.makeCompatible === true;
     const qualitySelector = typeof body.qualityId === "string" && body.qualityId.length > 0
         ? normalizeQualitySelector(body.qualityId)
         : null;
@@ -146,10 +147,16 @@ function handleCreateDownload(body, request, response) {
         }
         attempts.push(["-f", videoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["-f", videoFormatSelector(720), "--merge-output-format", "mp4"]);
+        attempts.push(["-f", nativeVideoFormatSelector(1080), "--merge-output-format", "mp4"]);
+        attempts.push(["-f", nativeVideoFormatSelector(720), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=android", "-f", videoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=android", "-f", videoFormatSelector(720), "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=android", "-f", nativeVideoFormatSelector(1080), "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=android", "-f", nativeVideoFormatSelector(720), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", videoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", videoFormatSelector(720), "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", nativeVideoFormatSelector(1080), "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", nativeVideoFormatSelector(720), "--merge-output-format", "mp4"]);
     }
 
     job.state = "downloading";
@@ -163,6 +170,7 @@ function handleCreateDownload(body, request, response) {
         baseArgs,
         sourceURL,
         type,
+        makeCompatible,
         job,
         request
     });
@@ -170,7 +178,7 @@ function handleCreateDownload(body, request, response) {
     sendJSON(response, 200, { id });
 }
 
-function startDownloadAttempt({ id, attemptIndex, attempts, baseArgs, sourceURL, type, job, request }) {
+function startDownloadAttempt({ id, attemptIndex, attempts, baseArgs, sourceURL, type, makeCompatible, job, request }) {
     const attemptArgs = attempts[Math.min(attemptIndex, attempts.length - 1)] || [];
     const args = [...baseArgs, ...attemptArgs, sourceURL];
     console.log(`download ${id}: yt-dlp attempt ${attemptIndex + 1}/${attempts.length}`);
@@ -204,7 +212,7 @@ function startDownloadAttempt({ id, attemptIndex, attempts, baseArgs, sourceURL,
         const filePath = findDownloadedFile(id);
         if (filePath) {
             console.log(`download ${id}: yt-dlp completed with file ${path.basename(filePath)}`);
-            if (type === "video") {
+            if (type === "video" && makeCompatible) {
                 convertVideoForCompatibility(filePath, job, request);
             } else {
                 completeJobWithFile(job, filePath, request);
@@ -214,7 +222,7 @@ function startDownloadAttempt({ id, attemptIndex, attempts, baseArgs, sourceURL,
 
         if (code !== 0 && shouldRetryFormat(output) && attemptIndex + 1 < attempts.length) {
             console.warn(`download ${id}: retrying after format failure\n${tailForLog(output)}`);
-            startDownloadAttempt({ id, attemptIndex: attemptIndex + 1, attempts, baseArgs, sourceURL, type, job, request });
+            startDownloadAttempt({ id, attemptIndex: attemptIndex + 1, attempts, baseArgs, sourceURL, type, makeCompatible, job, request });
             return;
         }
 
@@ -430,6 +438,16 @@ function videoFormatSelector(height) {
         `best[height<=${cappedHeight}][ext=mp4]`,
         `bestvideo[height<=${cappedHeight}]+bestaudio`,
         `best[height<=${cappedHeight}]`,
+        "best"
+    ].join("/");
+}
+
+function nativeVideoFormatSelector(height) {
+    const cappedHeight = Math.min(height, maxVideoHeight);
+    return [
+        `bestvideo[height<=${cappedHeight}]+bestaudio`,
+        `best[height<=${cappedHeight}]`,
+        "bestvideo+bestaudio",
         "best"
     ].join("/");
 }
