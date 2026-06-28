@@ -12,7 +12,7 @@ const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobsDirectory = path.join(downloadsDirectory, ".jobs");
-const serverVersion = "2026-06-28-json-formats";
+const serverVersion = "2026-06-28-download-fallbacks";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
@@ -87,24 +87,9 @@ async function handleQualities(body, response) {
 
     try {
         sourceURL = validateSourceURL(sourceURLFromBody(body));
-        const useCookies = shouldUseCookiesForRequest(body);
-        console.log(`qualities: listing formats for ${safeURLForLog(sourceURL)}`);
-        const metadata = await runCommand(
-            tools.ytDLP,
-            [
-                "--dump-single-json",
-                "--skip-download",
-                "--no-warnings",
-                ...ytDLPCookieArgs(useCookies),
-                "--no-playlist",
-                sourceURL
-            ],
-            { timeoutMs: qualitiesTimeoutMs }
-        );
-        const qualities = buildQualitiesFromMetadata(metadata.stdout);
-
+        console.log(`qualities: using automatic quality for ${safeURLForLog(sourceURL)}`);
         sendJSON(response, 200, {
-            qualities: qualities.length > 0 ? qualities : [{ id: "best", title: "Melhor qualidade" }]
+            qualities: [{ id: "auto", title: "Melhor qualidade" }]
         });
     } catch (error) {
         logError(`qualities ${safeURLForLog(sourceURL)}`, error);
@@ -137,7 +122,7 @@ function handleCreateDownload(body, request, response) {
     jobs.set(id, job);
     persistJob(job);
 
-    const args = [
+    const baseArgs = [
         "--no-playlist",
         "--newline",
         "--restrict-filenames",
@@ -148,20 +133,46 @@ function handleCreateDownload(body, request, response) {
         outputTemplate
     ];
 
+    const attempts = [];
     if (type === "audio") {
-        args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
+        attempts.push(["-x", "--audio-format", "mp3", "--audio-quality", "0"]);
     } else {
         if (qualitySelector) {
-            args.push("-f", qualitySelector);
+            attempts.push(["-f", qualitySelector, "--merge-output-format", "mp4"]);
         }
-        args.push("--merge-output-format", "mp4");
+        attempts.push(["--merge-output-format", "mp4"]);
+        attempts.push(["-f", "bv*+ba/b", "--merge-output-format", "mp4"]);
+        attempts.push(["-f", "b", "--merge-output-format", "mp4"]);
+        attempts.push(["-f", "18/b", "--merge-output-format", "mp4"]);
     }
-
-    args.push(sourceURL);
 
     job.state = "downloading";
     job.message = "Baixando...";
     persistJob(job);
+
+    startDownloadAttempt({
+        id,
+        attemptIndex: 0,
+        attempts,
+        baseArgs,
+        sourceURL,
+        type,
+        job,
+        request
+    });
+
+    sendJSON(response, 200, { id });
+}
+
+function startDownloadAttempt({ id, attemptIndex, attempts, baseArgs, sourceURL, type, job, request }) {
+    const attemptArgs = attempts[Math.min(attemptIndex, attempts.length - 1)] || [];
+    const args = [...baseArgs, ...attemptArgs, sourceURL];
+    console.log(`download ${id}: yt-dlp attempt ${attemptIndex + 1}/${attempts.length}`);
+
+    if (attemptIndex > 0) {
+        job.message = `Tentando formato alternativo ${attemptIndex + 1}...`;
+        persistJob(job);
+    }
 
     const process = spawn(tools.ytDLP, args, {
         cwd: downloadsDirectory,
@@ -193,6 +204,12 @@ function handleCreateDownload(body, request, response) {
             return;
         }
 
+        if (code !== 0 && shouldRetryFormat(output) && attemptIndex + 1 < attempts.length) {
+            console.warn(`download ${id}: retrying after format failure\n${tailForLog(output)}`);
+            startDownloadAttempt({ id, attemptIndex: attemptIndex + 1, attempts, baseArgs, sourceURL, type, job, request });
+            return;
+        }
+
         if (code !== 0) {
             job.state = "failed";
             job.percent = 100;
@@ -208,8 +225,6 @@ function handleCreateDownload(body, request, response) {
         persistJob(job);
         console.error(`download ${id}: final file not found\n${tailForLog(output)}`);
     });
-
-    sendJSON(response, 200, { id });
 }
 
 function completeJobWithFile(job, filePath, request) {
@@ -417,11 +432,18 @@ function clampQualitySelector(selector) {
 
 function normalizeQualitySelector(selector) {
     const trimmedSelector = selector.trim();
-    if (!trimmedSelector || trimmedSelector === "best") {
+    if (!trimmedSelector || trimmedSelector === "best" || trimmedSelector === "auto") {
         return null;
     }
 
     return clampQualitySelector(trimmedSelector);
+}
+
+function shouldRetryFormat(output) {
+    const lowercased = output.toLowerCase();
+    return lowercased.includes("requested format is not available")
+        || lowercased.includes("requested format not available")
+        || lowercased.includes("no video formats found");
 }
 
 function updateProgress(job, text) {
