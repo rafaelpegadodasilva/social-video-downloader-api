@@ -441,7 +441,7 @@ function sourceURLFromBody(body) {
 function prepareCookieFile() {
     const explicitPath = process.env.YTDLP_COOKIES_FILE || process.env.YTDLP_COOKIES_PATH;
     if (explicitPath) {
-        return explicitPath;
+        return writableCookieFileFrom(explicitPath) || explicitPath;
     }
 
     const secretFileCandidates = [
@@ -451,7 +451,7 @@ function prepareCookieFile() {
     ];
     for (const candidate of secretFileCandidates) {
         if (fs.existsSync(candidate)) {
-            return candidate;
+            return writableCookieFileFrom(candidate);
         }
     }
 
@@ -467,6 +467,18 @@ function prepareCookieFile() {
     const outputPath = path.join(process.env.RUNNER_TEMP || "/tmp", "yt-dlp-cookies.txt");
     fs.writeFileSync(outputPath, content, { mode: 0o600 });
     return outputPath;
+}
+
+function writableCookieFileFrom(sourcePath) {
+    try {
+        const content = fs.readFileSync(sourcePath);
+        const outputPath = path.join(process.env.RUNNER_TEMP || "/tmp", "yt-dlp-cookies.txt");
+        fs.writeFileSync(outputPath, content, { mode: 0o600 });
+        return outputPath;
+    } catch (error) {
+        console.warn(`could not copy cookies from ${sourcePath}: ${error.message}`);
+        return null;
+    }
 }
 
 function shouldUseCookiesForRequest(body) {
