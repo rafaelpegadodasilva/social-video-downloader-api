@@ -12,7 +12,7 @@ const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobsDirectory = path.join(downloadsDirectory, ".jobs");
-const serverVersion = "2026-06-28-ignore-ytdlp-config";
+const serverVersion = "2026-06-28-debug-formats";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
@@ -56,6 +56,11 @@ const server = http.createServer(async (request, response) => {
             return handleCreateDownload(body, request, response);
         }
 
+        if (request.method === "POST" && url.pathname === "/debug/formats") {
+            const body = await readJSON(request);
+            return handleDebugFormats(body, response);
+        }
+
         if (request.method === "GET" && url.pathname.startsWith("/downloads/")) {
             const id = decodeURIComponent(url.pathname.split("/").pop());
             return handleStatus(id, response);
@@ -95,6 +100,38 @@ async function handleQualities(body, response) {
         logError(`qualities ${safeURLForLog(sourceURL)}`, error);
         sendJSON(response, 500, {
             error: error.message || "Nao foi possivel carregar as qualidades."
+        });
+    }
+}
+
+async function handleDebugFormats(body, response) {
+    let sourceURL = "";
+
+    try {
+        sourceURL = validateSourceURL(sourceURLFromBody(body));
+        const useCookies = shouldUseCookiesForRequest(body);
+        const args = [
+            "--ignore-config",
+            "--no-playlist",
+            ...ytDLPCookieArgs(useCookies),
+            "-F",
+            sourceURL
+        ];
+
+        console.log(`debug formats: ${safeURLForLog(sourceURL)}`);
+        const result = await runCommand(tools.ytDLP, args, { timeoutMs: 30_000 });
+        sendJSON(response, 200, {
+            ok: true,
+            command: tools.ytDLP,
+            args,
+            stdout: result.stdout,
+            stderr: result.stderr
+        });
+    } catch (error) {
+        logError(`debug formats ${safeURLForLog(sourceURL)}`, error);
+        sendJSON(response, 500, {
+            ok: false,
+            error: error.message || "Nao foi possivel listar os formatos."
         });
     }
 }
@@ -146,8 +183,10 @@ function handleCreateDownload(body, request, response) {
         if (qualitySelector) {
             attempts.push(["-f", qualitySelector, "--merge-output-format", "mp4"]);
         } else {
+            attempts.push(["--extractor-args", "youtube:player_client=android"]);
+            attempts.push(["--extractor-args", "youtube:player_client=android", "-S", `res:${maxVideoHeight}`]);
+            attempts.push(["-f", "bestvideo+bestaudio/best"]);
             attempts.push([]);
-            attempts.push(["-S", `res:${maxVideoHeight}`]);
         }
         attempts.push(["-f", videoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["-f", videoFormatSelector(720), "--merge-output-format", "mp4"]);
