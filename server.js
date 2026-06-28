@@ -11,11 +11,14 @@ const downloadsDirectory = process.env.DOWNLOADS_DIR
 const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
+const jobsDirectory = path.join(downloadsDirectory, ".jobs");
+const serverVersion = "2026-06-28-job-persistence";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
 
 fs.mkdirSync(downloadsDirectory, { recursive: true });
+fs.mkdirSync(jobsDirectory, { recursive: true });
 
 const server = http.createServer(async (request, response) => {
     const startedAt = Date.now();
@@ -38,6 +41,7 @@ const server = http.createServer(async (request, response) => {
                 ffmpeg: tools.ffmpeg,
                 ffprobe: tools.ffprobe,
                 cookiesConfigured: Boolean(cookieFilePath),
+                version: serverVersion,
                 port
             });
         }
@@ -74,7 +78,7 @@ server.listen(port, host, () => {
     console.log(`yt-dlp: ${tools.ytDLP}`);
     console.log(`ffmpeg: ${tools.ffmpeg}`);
     console.log(`ffprobe: ${tools.ffprobe}`);
-    console.log("SERVER VERSION: 2026-06-28 TEST");
+    console.log(`SERVER VERSION: ${serverVersion}`);
     console.log(`cookies configured: ${Boolean(cookieFilePath)}`);
 });
 
@@ -130,6 +134,7 @@ function handleCreateDownload(body, request, response) {
         fileURL: null
     };
     jobs.set(id, job);
+    persistJob(job);
 
     const args = [
         "--no-playlist",
@@ -155,6 +160,7 @@ function handleCreateDownload(body, request, response) {
 
     job.state = "downloading";
     job.message = "Baixando...";
+    persistJob(job);
 
     const process = spawn(tools.ytDLP, args, {
         cwd: downloadsDirectory,
@@ -190,6 +196,7 @@ function handleCreateDownload(body, request, response) {
             job.state = "failed";
             job.percent = 100;
             job.message = lastUsefulLine(output) || `yt-dlp saiu com codigo ${code}.`;
+            persistJob(job);
             console.error(`download ${id}: yt-dlp failed with code ${code}\n${tailForLog(output)}`);
             return;
         }
@@ -197,6 +204,7 @@ function handleCreateDownload(body, request, response) {
         job.state = "failed";
         job.percent = 100;
         job.message = "Arquivo final nao encontrado.";
+        persistJob(job);
         console.error(`download ${id}: final file not found\n${tailForLog(output)}`);
     });
 
@@ -212,6 +220,7 @@ function completeJobWithFile(job, filePath, request) {
     job.fileName = fileName;
     job.title = readableTitle(fileName, job.id);
     job.fileURL = absoluteURL(request, `/files/${encodeURIComponent(fileName)}`);
+    persistJob(job);
 }
 
 function convertVideoForCompatibility(inputFile, job, request) {
@@ -223,6 +232,7 @@ function convertVideoForCompatibility(inputFile, job, request) {
     job.state = "converting";
     job.percent = 0;
     job.message = "Convertendo video para maior compatibilidade, aguarde!";
+    persistJob(job);
 
     const args = [
         "-y",
@@ -261,6 +271,7 @@ function convertVideoForCompatibility(inputFile, job, request) {
 
         if (fs.existsSync(inputFile)) {
             job.message = "Nao foi possivel converter. Enviando o MP4 original.";
+            persistJob(job);
             console.error(`download ${job.id}: ffmpeg failed with code ${code}, sending original\n${tailForLog(output)}`);
             completeJobWithFile(job, inputFile, request);
             return;
@@ -269,12 +280,13 @@ function convertVideoForCompatibility(inputFile, job, request) {
         job.state = "failed";
         job.percent = 100;
         job.message = lastUsefulLine(output) || `ffmpeg saiu com codigo ${code}.`;
+        persistJob(job);
         console.error(`download ${job.id}: ffmpeg failed with code ${code}\n${tailForLog(output)}`);
     });
 }
 
 function handleStatus(id, response) {
-    const job = jobs.get(id);
+    const job = jobs.get(id) || loadJob(id);
     if (!job) {
         return sendJSON(response, 404, { error: "Download not found" });
     }
@@ -364,6 +376,7 @@ function updateProgress(job, text) {
     if (match) {
         job.percent = Math.max(job.percent, Number(match[1]));
         job.message = `Baixando... ${job.percent.toFixed(1)}%`;
+        persistJob(job);
     }
 }
 
@@ -392,6 +405,7 @@ function removeCompletedJobForFile(fileName) {
     for (const [id, job] of jobs.entries()) {
         if (job.fileName === fileName) {
             jobs.delete(id);
+            tryRemove(jobFilePath(id));
         }
     }
 }
@@ -554,6 +568,34 @@ function updateConversionProgress(job, text, duration) {
     const percent = Math.min(Math.max((seconds / duration) * 100, 0), 99.9);
     job.percent = percent;
     job.message = "Convertendo video para maior compatibilidade, aguarde!";
+    persistJob(job);
+}
+
+function jobFilePath(id) {
+    return path.join(jobsDirectory, `${path.basename(id)}.json`);
+}
+
+function persistJob(job) {
+    try {
+        fs.writeFileSync(jobFilePath(job.id), JSON.stringify(job), { mode: 0o600 });
+    } catch (error) {
+        console.warn(`could not persist job ${job.id}: ${error.message}`);
+    }
+}
+
+function loadJob(id) {
+    try {
+        const data = fs.readFileSync(jobFilePath(id), "utf8");
+        const job = JSON.parse(data);
+        if (job && job.id === id) {
+            jobs.set(id, job);
+            return job;
+        }
+    } catch {
+        // Missing or invalid persisted job.
+    }
+
+    return null;
 }
 
 function processEnvironment() {
