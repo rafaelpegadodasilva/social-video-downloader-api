@@ -12,7 +12,7 @@ const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobsDirectory = path.join(downloadsDirectory, ".jobs");
-const serverVersion = "2026-06-28-job-persistence";
+const serverVersion = "2026-06-28-json-formats";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
@@ -89,18 +89,19 @@ async function handleQualities(body, response) {
         sourceURL = validateSourceURL(sourceURLFromBody(body));
         const useCookies = shouldUseCookiesForRequest(body);
         console.log(`qualities: listing formats for ${safeURLForLog(sourceURL)}`);
-        const formats = await runCommand(
+        const metadata = await runCommand(
             tools.ytDLP,
             [
+                "--dump-single-json",
+                "--skip-download",
                 "--no-warnings",
                 ...ytDLPCookieArgs(useCookies),
-                "-F",
                 "--no-playlist",
                 sourceURL
             ],
             { timeoutMs: qualitiesTimeoutMs }
         );
-        const qualities = buildQualitiesFromFormatList(formats.stdout);
+        const qualities = buildQualitiesFromMetadata(metadata.stdout);
 
         sendJSON(response, 200, {
             qualities: qualities.length > 0 ? qualities : [{ id: "best", title: "Melhor qualidade" }]
@@ -322,28 +323,80 @@ function handleFile(fileName, response) {
     stream.pipe(response);
 }
 
-function buildQualitiesFromFormatList(output) {
-    const heights = new Set();
+function buildQualitiesFromMetadata(output) {
+    const metadata = JSON.parse(jsonPayload(output));
+    const formats = collectFormats(metadata)
+        .filter(format => format && format.format_id);
+    const audioFormat = bestAudioFormat(formats);
+    const formatsByHeight = new Map();
 
-    for (const line of output.split(/\r?\n/)) {
-        if (!line.includes("video")) continue;
+    for (const format of formats) {
+        const height = Number(format.height || 0);
+        if (!Number.isFinite(height) || height <= 0 || height > maxVideoHeight) continue;
+        if (format.vcodec === "none") continue;
+        if (!format.url && !format.manifest_url) continue;
 
-        const heightMatch = line.match(/(\d{3,4})p/);
-        if (!heightMatch) continue;
-
-        const height = Number(heightMatch[1]);
-        if (Number.isFinite(height) && height > 0 && height <= maxVideoHeight) {
-            heights.add(height);
+        const existing = formatsByHeight.get(height);
+        if (!existing || formatScore(format) > formatScore(existing)) {
+            formatsByHeight.set(height, format);
         }
     }
 
-    return Array.from(heights)
-        .sort((a, b) => b - a)
+    return Array.from(formatsByHeight.entries())
+        .sort((a, b) => b[0] - a[0])
         .slice(0, 8)
-        .map(height => ({
-            id: videoFormatSelector(height),
+        .map(([height, format]) => ({
+            id: formatSelectorFor(format, audioFormat),
             title: `${height}p`
         }));
+}
+
+function jsonPayload(output) {
+    const trimmed = output.trim();
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end >= start) {
+        return trimmed.slice(start, end + 1);
+    }
+
+    return trimmed;
+}
+
+function collectFormats(metadata) {
+    const formats = Array.isArray(metadata.formats) ? [...metadata.formats] : [];
+    if (Array.isArray(metadata.entries)) {
+        for (const entry of metadata.entries) {
+            if (Array.isArray(entry.formats)) {
+                formats.push(...entry.formats);
+            }
+        }
+    }
+
+    return formats;
+}
+
+function bestAudioFormat(formats) {
+    return formats
+        .filter(format => format.acodec && format.acodec !== "none" && format.vcodec === "none")
+        .sort((a, b) => formatScore(b) - formatScore(a))[0] || null;
+}
+
+function formatSelectorFor(videoFormat, audioFormat) {
+    if (videoFormat.acodec && videoFormat.acodec !== "none") {
+        return videoFormat.format_id;
+    }
+
+    return audioFormat
+        ? `${videoFormat.format_id}+${audioFormat.format_id}`
+        : videoFormat.format_id;
+}
+
+function formatScore(format) {
+    let score = Number(format.tbr || format.vbr || format.abr || 0);
+    if (format.ext === "mp4" || format.ext === "m4a") score += 10_000;
+    if (typeof format.vcodec === "string" && format.vcodec.startsWith("avc1")) score += 5_000;
+    if (format.protocol === "https") score += 1_000;
+    return score;
 }
 
 function videoFormatSelector(height) {
