@@ -37,6 +37,7 @@ const server = http.createServer(async (request, response) => {
                 ytDLP: tools.ytDLP,
                 ffmpeg: tools.ffmpeg,
                 ffprobe: tools.ffprobe,
+                cookiesConfigured: Boolean(cookieFilePath),
                 port
             });
         }
@@ -73,6 +74,7 @@ server.listen(port, host, () => {
     console.log(`yt-dlp: ${tools.ytDLP}`);
     console.log(`ffmpeg: ${tools.ffmpeg}`);
     console.log(`ffprobe: ${tools.ffprobe}`);
+    console.log(`cookies configured: ${Boolean(cookieFilePath)}`);
 });
 
 async function handleQualities(body, response) {
