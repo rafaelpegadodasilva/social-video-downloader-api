@@ -12,7 +12,7 @@ const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobsDirectory = path.join(downloadsDirectory, ".jobs");
-const serverVersion = "2026-06-28-native-format-first";
+const serverVersion = "2026-06-28-youtube-client-fallback";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
@@ -136,6 +136,10 @@ function handleCreateDownload(body, request, response) {
     const attempts = [];
     if (type === "audio") {
         attempts.push(["-x", "--audio-format", "mp3", "--audio-quality", "0"]);
+        attempts.push([
+            "--extractor-args", "youtube:player_client=android",
+            "-x", "--audio-format", "mp3", "--audio-quality", "0"
+        ]);
     } else {
         if (qualitySelector) {
             attempts.push(["-f", qualitySelector, "--merge-output-format", "mp4"]);
@@ -144,6 +148,10 @@ function handleCreateDownload(body, request, response) {
         attempts.push(["-f", "bv*+ba/b", "--merge-output-format", "mp4"]);
         attempts.push(["-f", "b", "--merge-output-format", "mp4"]);
         attempts.push(["-f", "18/b", "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=android"]);
+        attempts.push(["--extractor-args", "youtube:player_client=android", "-f", "bv*+ba/b", "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=android", "-f", "b", "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", "bv*+ba/b", "--merge-output-format", "mp4"]);
     }
 
     job.state = "downloading";
@@ -170,7 +178,9 @@ function startDownloadAttempt({ id, attemptIndex, attempts, baseArgs, sourceURL,
     console.log(`download ${id}: yt-dlp attempt ${attemptIndex + 1}/${attempts.length}`);
 
     if (attemptIndex > 0) {
-        job.message = `Tentando formato alternativo ${attemptIndex + 1}...`;
+        job.message = attemptArgs.includes("--extractor-args")
+            ? `Tentando client alternativo ${attemptIndex + 1}...`
+            : `Tentando formato alternativo ${attemptIndex + 1}...`;
         persistJob(job);
     }
 
