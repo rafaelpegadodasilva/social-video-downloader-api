@@ -12,7 +12,7 @@ const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobsDirectory = path.join(downloadsDirectory, ".jobs");
-const serverVersion = "2026-06-28-native-no-convert";
+const serverVersion = "2026-06-28-auto-native-first";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
@@ -144,19 +144,32 @@ function handleCreateDownload(body, request, response) {
     } else {
         if (qualitySelector) {
             attempts.push(["-f", qualitySelector, "--merge-output-format", "mp4"]);
+        } else {
+            attempts.push([]);
+            attempts.push(["-S", `res:${maxVideoHeight}`]);
         }
         attempts.push(["-f", videoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["-f", videoFormatSelector(720), "--merge-output-format", "mp4"]);
         attempts.push(["-f", nativeVideoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["-f", nativeVideoFormatSelector(720), "--merge-output-format", "mp4"]);
+        attempts.push(["-f", nativeVideoFormatSelector(1080)]);
+        attempts.push(["-f", nativeVideoFormatSelector(720)]);
+        attempts.push(["--extractor-args", "youtube:player_client=android"]);
+        attempts.push(["--extractor-args", "youtube:player_client=android", "-S", `res:${maxVideoHeight}`]);
         attempts.push(["--extractor-args", "youtube:player_client=android", "-f", videoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=android", "-f", videoFormatSelector(720), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=android", "-f", nativeVideoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=android", "-f", nativeVideoFormatSelector(720), "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=android", "-f", nativeVideoFormatSelector(1080)]);
+        attempts.push(["--extractor-args", "youtube:player_client=android", "-f", nativeVideoFormatSelector(720)]);
+        attempts.push(["--extractor-args", "youtube:player_client=web_creator"]);
+        attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-S", `res:${maxVideoHeight}`]);
         attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", videoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", videoFormatSelector(720), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", nativeVideoFormatSelector(1080), "--merge-output-format", "mp4"]);
         attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", nativeVideoFormatSelector(720), "--merge-output-format", "mp4"]);
+        attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", nativeVideoFormatSelector(1080)]);
+        attempts.push(["--extractor-args", "youtube:player_client=web_creator", "-f", nativeVideoFormatSelector(720)]);
     }
 
     job.state = "downloading";
