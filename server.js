@@ -74,6 +74,7 @@ server.listen(port, host, () => {
     console.log(`yt-dlp: ${tools.ytDLP}`);
     console.log(`ffmpeg: ${tools.ffmpeg}`);
     console.log(`ffprobe: ${tools.ffprobe}`);
+    console.log("SERVER VERSION: 2026-06-28 TEST");
     console.log(`cookies configured: ${Boolean(cookieFilePath)}`);
 });
 
