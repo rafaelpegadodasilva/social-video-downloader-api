@@ -12,7 +12,7 @@ const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobsDirectory = path.join(downloadsDirectory, ".jobs");
-const serverVersion = "2026-06-28-download-fallbacks";
+const serverVersion = "2026-06-28-native-format-first";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
@@ -140,7 +140,7 @@ function handleCreateDownload(body, request, response) {
         if (qualitySelector) {
             attempts.push(["-f", qualitySelector, "--merge-output-format", "mp4"]);
         }
-        attempts.push(["--merge-output-format", "mp4"]);
+        attempts.push([]);
         attempts.push(["-f", "bv*+ba/b", "--merge-output-format", "mp4"]);
         attempts.push(["-f", "b", "--merge-output-format", "mp4"]);
         attempts.push(["-f", "18/b", "--merge-output-format", "mp4"]);
