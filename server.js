@@ -114,7 +114,7 @@ function handleCreateDownload(body, request, response) {
     const type = body.type === "audio" ? "audio" : "video";
     const useCookies = shouldUseCookiesForRequest(body);
     const qualityId = typeof body.qualityId === "string" && body.qualityId.length > 0
-        ? clampQualitySelector(body.qualityId)
+        ? normalizeQualitySelector(body.qualityId)
         : videoFormatSelector(maxVideoHeight);
     const id = randomUUID();
     const outputTemplate = path.join(downloadsDirectory, `${id}-%(title).180B.%(ext)s`);
@@ -350,6 +350,15 @@ function videoFormatSelector(height) {
 
 function clampQualitySelector(selector) {
     return selector.replace(/height<=\d+/g, `height<=${maxVideoHeight}`);
+}
+
+function normalizeQualitySelector(selector) {
+    const trimmedSelector = selector.trim();
+    if (!trimmedSelector || trimmedSelector === "best") {
+        return videoFormatSelector(maxVideoHeight);
+    }
+
+    return clampQualitySelector(trimmedSelector);
 }
 
 function updateProgress(job, text) {
