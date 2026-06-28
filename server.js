@@ -12,7 +12,7 @@ const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobsDirectory = path.join(downloadsDirectory, ".jobs");
-const serverVersion = "2026-06-28-auto-native-first";
+const serverVersion = "2026-06-28-ignore-ytdlp-config";
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
@@ -124,6 +124,7 @@ function handleCreateDownload(body, request, response) {
     persistJob(job);
 
     const baseArgs = [
+        "--ignore-config",
         "--no-playlist",
         "--newline",
         "--restrict-filenames",
