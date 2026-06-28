@@ -53,6 +53,7 @@ docker run --rm \
 - `PORT`: porta HTTP. Padrao: `8765`.
 - `DOWNLOADS_DIR`: pasta onde os arquivos finais sao salvos. Padrao local: `backend/downloads`; no Docker: `/app/downloads`.
 - `QUALITIES_TIMEOUT_MS`: tempo maximo para listar qualidades com `yt-dlp`. Padrao: `60000`.
+- `MAX_VIDEO_HEIGHT`: altura maxima do video baixado. Padrao: `1080`, evitando downloads em 4K.
 - `YTDLP_PATH`: caminho customizado para `yt-dlp`.
 - `FFMPEG_PATH`: caminho customizado para `ffmpeg`.
 - `YTDLP_COOKIES_BASE64`: cookies exportados do navegador em formato Netscape, codificados em base64. Use quando YouTube retornar "Sign in to confirm you're not a bot".

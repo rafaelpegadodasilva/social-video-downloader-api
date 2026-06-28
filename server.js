@@ -9,6 +9,7 @@ const port = Number(process.env.PORT || 8765);
 const downloadsDirectory = process.env.DOWNLOADS_DIR
     || path.join(__dirname, "downloads");
 const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
+const maxVideoHeight = Number(process.env.MAX_VIDEO_HEIGHT || 1080);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobs = new Map();
 const cookieFilePath = prepareCookieFile();
@@ -108,8 +109,8 @@ function handleCreateDownload(body, request, response) {
     const sourceURL = validateSourceURL(sourceURLFromBody(body));
     const type = body.type === "audio" ? "audio" : "video";
     const qualityId = typeof body.qualityId === "string" && body.qualityId.length > 0
-        ? body.qualityId
-        : "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[ext=mp4]/best";
+        ? clampQualitySelector(body.qualityId)
+        : videoFormatSelector(maxVideoHeight);
     const id = randomUUID();
     const outputTemplate = path.join(downloadsDirectory, `${id}-%(title).180B.%(ext)s`);
     console.log(`download ${id}: ${type} ${safeURLForLog(sourceURL)} quality=${qualityId}`);
@@ -316,7 +317,7 @@ function buildQualitiesFromFormatList(output) {
         if (!heightMatch) continue;
 
         const height = Number(heightMatch[1]);
-        if (Number.isFinite(height) && height > 0) {
+        if (Number.isFinite(height) && height > 0 && height <= maxVideoHeight) {
             heights.add(height);
         }
     }
@@ -331,14 +332,19 @@ function buildQualitiesFromFormatList(output) {
 }
 
 function videoFormatSelector(height) {
+    const cappedHeight = Math.min(height, maxVideoHeight);
     return [
-        `bestvideo[height<=${height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]`,
-        `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]`,
-        `best[height<=${height}][ext=mp4]`,
-        `bestvideo[height<=${height}]+bestaudio`,
-        `best[height<=${height}]`,
+        `bestvideo[height<=${cappedHeight}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]`,
+        `bestvideo[height<=${cappedHeight}][ext=mp4]+bestaudio[ext=m4a]`,
+        `best[height<=${cappedHeight}][ext=mp4]`,
+        `bestvideo[height<=${cappedHeight}]+bestaudio`,
+        `best[height<=${cappedHeight}]`,
         "best"
     ].join("/");
+}
+
+function clampQualitySelector(selector) {
+    return selector.replace(/height<=\d+/g, `height<=${maxVideoHeight}`);
 }
 
 function updateProgress(job, text) {
