@@ -17,6 +17,12 @@ const tools = resolveTools();
 fs.mkdirSync(downloadsDirectory, { recursive: true });
 
 const server = http.createServer(async (request, response) => {
+    const startedAt = Date.now();
+    const requestURL = request.url || "/";
+    response.on("finish", () => {
+        console.log(`${request.method} ${requestURL} -> ${response.statusCode} ${Date.now() - startedAt}ms`);
+    });
+
     try {
         const url = new URL(request.url, `http://${request.headers.host}`);
 
@@ -56,6 +62,7 @@ const server = http.createServer(async (request, response) => {
 
         sendJSON(response, 404, { error: "Not found" });
     } catch (error) {
+        logError("request", error);
         sendJSON(response, 500, { error: error.message || "Internal server error" });
     }
 });
@@ -68,8 +75,11 @@ server.listen(port, host, () => {
 });
 
 async function handleQualities(body, response) {
+    let sourceURL = "";
+
     try {
-        const sourceURL = validateSourceURL(sourceURLFromBody(body));
+        sourceURL = validateSourceURL(sourceURLFromBody(body));
+        console.log(`qualities: listing formats for ${safeURLForLog(sourceURL)}`);
         const formats = await runCommand(
             tools.ytDLP,
             [
@@ -87,6 +97,7 @@ async function handleQualities(body, response) {
             qualities: qualities.length > 0 ? qualities : [{ id: "best", title: "Melhor qualidade" }]
         });
     } catch (error) {
+        logError(`qualities ${safeURLForLog(sourceURL)}`, error);
         sendJSON(response, 500, {
             error: error.message || "Nao foi possivel carregar as qualidades."
         });
@@ -101,6 +112,7 @@ function handleCreateDownload(body, request, response) {
         : "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[ext=mp4]/best";
     const id = randomUUID();
     const outputTemplate = path.join(downloadsDirectory, `${id}-%(title).180B.%(ext)s`);
+    console.log(`download ${id}: ${type} ${safeURLForLog(sourceURL)} quality=${qualityId}`);
 
     const job = {
         id,
@@ -161,6 +173,7 @@ function handleCreateDownload(body, request, response) {
     process.on("close", code => {
         const filePath = findDownloadedFile(id);
         if (filePath) {
+            console.log(`download ${id}: yt-dlp completed with file ${path.basename(filePath)}`);
             if (type === "video") {
                 convertVideoForCompatibility(filePath, job, request);
             } else {
@@ -173,12 +186,14 @@ function handleCreateDownload(body, request, response) {
             job.state = "failed";
             job.percent = 100;
             job.message = lastUsefulLine(output) || `yt-dlp saiu com codigo ${code}.`;
+            console.error(`download ${id}: yt-dlp failed with code ${code}\n${tailForLog(output)}`);
             return;
         }
 
         job.state = "failed";
         job.percent = 100;
         job.message = "Arquivo final nao encontrado.";
+        console.error(`download ${id}: final file not found\n${tailForLog(output)}`);
     });
 
     sendJSON(response, 200, { id });
@@ -186,6 +201,7 @@ function handleCreateDownload(body, request, response) {
 
 function completeJobWithFile(job, filePath, request) {
     const fileName = path.basename(filePath);
+    console.log(`download ${job.id}: completed ${fileName}`);
     job.state = "completed";
     job.percent = 100;
     job.message = "Download concluido.";
@@ -198,6 +214,7 @@ function convertVideoForCompatibility(inputFile, job, request) {
     const parsed = path.parse(inputFile);
     const outputFile = path.join(parsed.dir, `${parsed.name}-compatible.mp4`);
     const duration = mediaDuration(inputFile);
+    console.log(`download ${job.id}: converting ${path.basename(inputFile)}`);
 
     job.state = "converting";
     job.percent = 0;
@@ -240,6 +257,7 @@ function convertVideoForCompatibility(inputFile, job, request) {
 
         if (fs.existsSync(inputFile)) {
             job.message = "Nao foi possivel converter. Enviando o MP4 original.";
+            console.error(`download ${job.id}: ffmpeg failed with code ${code}, sending original\n${tailForLog(output)}`);
             completeJobWithFile(job, inputFile, request);
             return;
         }
@@ -247,6 +265,7 @@ function convertVideoForCompatibility(inputFile, job, request) {
         job.state = "failed";
         job.percent = 100;
         job.message = lastUsefulLine(output) || `ffmpeg saiu com codigo ${code}.`;
+        console.error(`download ${job.id}: ffmpeg failed with code ${code}\n${tailForLog(output)}`);
     });
 }
 
@@ -357,6 +376,31 @@ function removeCompletedJobForFile(fileName) {
             jobs.delete(id);
         }
     }
+}
+
+function safeURLForLog(value) {
+    if (!value) return "<empty>";
+
+    try {
+        const url = new URL(value);
+        url.search = url.search ? "?..." : "";
+        return url.toString();
+    } catch {
+        return "<invalid>";
+    }
+}
+
+function logError(context, error) {
+    console.error(`${context}: ${error && error.stack ? error.stack : error}`);
+}
+
+function tailForLog(value, maxLines = 25) {
+    return value
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .slice(-maxLines)
+        .join("\n");
 }
 
 function validateSourceURL(value) {
