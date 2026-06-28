@@ -1,0 +1,15 @@
+{
+  "name": "social-video-downloader-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend API for the Social Video Downloader iOS app.",
+  "scripts": {
+    "start": "node server.js",
+    "start:local": "PORT=8765 node server.js",
+    "docker:build": "docker build -t social-video-downloader-api .",
+    "docker:run": "docker run --rm -p 8765:8765 -v \"$HOME/Downloads/Social Video Downloader:/app/downloads\" social-video-downloader-api"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
