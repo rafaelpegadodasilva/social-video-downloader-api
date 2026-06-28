@@ -9,35 +9,24 @@ Use apenas com conteudo que voce tem direito de baixar.
 ## Arquivos importantes
 
 - `server.js`: API HTTP da ponte.
-- `package.json`: scripts para rodar localmente ou via Docker.
+- `package.json`: scripts para rodar em servidor Node ou via Docker.
 - `Dockerfile`: ambiente pronto para servidor, instalando Node.js, `yt-dlp` e `ffmpeg`.
 - `downloads/`: pasta onde os videos e audios baixados ficam por padrao.
 
-## Rodar no Mac local
+## URL em producao
 
-Instale as ferramentas:
-
-```sh
-brew install node yt-dlp ffmpeg
-```
-
-Rode a ponte:
-
-```sh
-cd "/Volumes/SSDExterno/projetos/AppYOUTUBE/IOS VERSION/Social Video Downloader iOS/backend"
-npm run start:local
-```
-
-No simulador iOS, configure:
+Configure o app iOS para usar:
 
 ```text
-http://127.0.0.1:8765
+https://social-video-downloader-api.onrender.com
 ```
 
-No iPhone fisico, use o IP do Mac na mesma rede:
+## Rodar em servidor Node
 
-```text
-http://192.168.100.3:8765
+O servidor precisa ter `node`, `yt-dlp`, `ffmpeg` e `ffprobe` instalados no `PATH`.
+
+```sh
+npm start
 ```
 
 ## Rodar em servidor com Docker
@@ -63,6 +52,7 @@ docker run --rm \
 - `HOST`: host de escuta. Padrao: `0.0.0.0`.
 - `PORT`: porta HTTP. Padrao: `8765`.
 - `DOWNLOADS_DIR`: pasta onde os arquivos finais sao salvos. Padrao local: `backend/downloads`; no Docker: `/app/downloads`.
+- `QUALITIES_TIMEOUT_MS`: tempo maximo para listar qualidades com `yt-dlp`. Padrao: `60000`.
 - `YTDLP_PATH`: caminho customizado para `yt-dlp`.
 - `FFMPEG_PATH`: caminho customizado para `ffmpeg`.
 
@@ -77,5 +67,5 @@ docker run --rm \
 Exemplo:
 
 ```sh
-curl http://127.0.0.1:8765/health
+curl https://social-video-downloader-api.onrender.com/health
 ```

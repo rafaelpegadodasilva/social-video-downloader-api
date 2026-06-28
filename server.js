@@ -8,6 +8,7 @@ const host = process.env.HOST || "0.0.0.0";
 const port = Number(process.env.PORT || 8765);
 const downloadsDirectory = process.env.DOWNLOADS_DIR
     || path.join(__dirname, "downloads");
+const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobs = new Map();
 const tools = resolveTools();
@@ -17,6 +18,10 @@ fs.mkdirSync(downloadsDirectory, { recursive: true });
 const server = http.createServer(async (request, response) => {
     try {
         const url = new URL(request.url, `http://${request.headers.host}`);
+
+        if (request.method === "OPTIONS") {
+            return sendEmpty(response, 204);
+        }
 
         if (request.method === "GET" && url.pathname === "/health") {
             return sendJSON(response, 200, {
@@ -62,18 +67,27 @@ server.listen(port, host, () => {
 });
 
 async function handleQualities(body, response) {
-    const sourceURL = validateSourceURL(body.url);
-    const metadata = await runCommand(tools.ytDLP, ["-J", "--no-playlist", sourceURL]);
-    const parsed = JSON.parse(metadata.stdout);
-    const qualities = buildQualities(parsed.formats || []);
+    try {
+        const sourceURL = validateSourceURL(sourceURLFromBody(body));
+        const formats = await runCommand(
+            tools.ytDLP,
+            ["--no-warnings", "-F", "--no-playlist", sourceURL],
+            { timeoutMs: qualitiesTimeoutMs }
+        );
+        const qualities = buildQualitiesFromFormatList(formats.stdout);
 
-    sendJSON(response, 200, {
-        qualities: qualities.length > 0 ? qualities : [{ id: "best", title: "Melhor qualidade" }]
-    });
+        sendJSON(response, 200, {
+            qualities: qualities.length > 0 ? qualities : [{ id: "best", title: "Melhor qualidade" }]
+        });
+    } catch (error) {
+        sendJSON(response, 500, {
+            error: error.message || "Nao foi possivel carregar as qualidades."
+        });
+    }
 }
 
 function handleCreateDownload(body, request, response) {
-    const sourceURL = validateSourceURL(body.url);
+    const sourceURL = validateSourceURL(sourceURLFromBody(body));
     const type = body.type === "audio" ? "audio" : "video";
     const qualityId = typeof body.qualityId === "string" && body.qualityId.length > 0
         ? body.qualityId
@@ -253,7 +267,7 @@ function handleFile(fileName, response) {
     }
 
     response.writeHead(200, {
-        "Content-Type": contentTypeFor(filePath),
+        ...commonHeaders(contentTypeFor(filePath)),
         "Content-Disposition": `attachment; filename="${safeName.replaceAll("\"", "")}"`
     });
 
@@ -265,12 +279,18 @@ function handleFile(fileName, response) {
     stream.pipe(response);
 }
 
-function buildQualities(formats) {
+function buildQualitiesFromFormatList(output) {
     const heights = new Set();
 
-    for (const format of formats) {
-        if (format.height && format.vcodec && format.vcodec !== "none") {
-            heights.add(format.height);
+    for (const line of output.split(/\r?\n/)) {
+        if (!line.includes("video")) continue;
+
+        const heightMatch = line.match(/(\d{3,4})p/);
+        if (!heightMatch) continue;
+
+        const height = Number(heightMatch[1]);
+        if (Number.isFinite(height) && height > 0) {
+            heights.add(height);
         }
     }
 
@@ -278,9 +298,20 @@ function buildQualities(formats) {
         .sort((a, b) => b - a)
         .slice(0, 8)
         .map(height => ({
-            id: `bestvideo[height<=${height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${height}][ext=mp4]/best`,
+            id: videoFormatSelector(height),
             title: `${height}p`
         }));
+}
+
+function videoFormatSelector(height) {
+    return [
+        `bestvideo[height<=${height}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]`,
+        `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]`,
+        `best[height<=${height}][ext=mp4]`,
+        `bestvideo[height<=${height}]+bestaudio`,
+        `best[height<=${height}]`,
+        "best"
+    ].join("/");
 }
 
 function updateProgress(job, text) {
@@ -338,6 +369,10 @@ function validateSourceURL(value) {
     }
 
     return parsed.toString();
+}
+
+function sourceURLFromBody(body) {
+    return body.url || body.link;
 }
 
 function resolveTools() {
@@ -439,8 +474,22 @@ function lastUsefulLine(value) {
         .slice(-1)[0];
 }
 
+function commonHeaders(contentType) {
+    return {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Content-Type": contentType
+    };
+}
+
+function sendEmpty(response, statusCode) {
+    response.writeHead(statusCode, commonHeaders("text/plain"));
+    response.end();
+}
+
 function sendJSON(response, statusCode, payload) {
-    response.writeHead(statusCode, { "Content-Type": "application/json" });
+    response.writeHead(statusCode, commonHeaders("application/json"));
     response.end(JSON.stringify(payload));
 }
 
@@ -468,11 +517,19 @@ function readJSON(request) {
     });
 }
 
-function runCommand(command, args) {
+function runCommand(command, args, options = {}) {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, { env: processEnvironment() });
         let stdout = "";
         let stderr = "";
+        let didTimeout = false;
+        const timeoutMs = options.timeoutMs || 0;
+        const timeout = timeoutMs > 0
+            ? setTimeout(() => {
+                didTimeout = true;
+                child.kill("SIGKILL");
+            }, timeoutMs)
+            : null;
 
         child.stdout.on("data", chunk => {
             stdout += chunk.toString();
@@ -482,8 +539,17 @@ function runCommand(command, args) {
             stderr += chunk.toString();
         });
 
-        child.on("error", reject);
+        child.on("error", error => {
+            if (timeout) clearTimeout(timeout);
+            reject(error);
+        });
         child.on("close", code => {
+            if (timeout) clearTimeout(timeout);
+            if (didTimeout) {
+                reject(new Error(`${command} excedeu o tempo limite de ${Math.round(timeoutMs / 1000)}s.`));
+                return;
+            }
+
             if (code === 0) {
                 resolve({ stdout, stderr });
             } else {
