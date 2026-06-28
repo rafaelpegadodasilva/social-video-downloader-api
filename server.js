@@ -113,12 +113,12 @@ function handleCreateDownload(body, request, response) {
     const sourceURL = validateSourceURL(sourceURLFromBody(body));
     const type = body.type === "audio" ? "audio" : "video";
     const useCookies = shouldUseCookiesForRequest(body);
-    const qualityId = typeof body.qualityId === "string" && body.qualityId.length > 0
+    const qualitySelector = typeof body.qualityId === "string" && body.qualityId.length > 0
         ? normalizeQualitySelector(body.qualityId)
-        : videoFormatSelector(maxVideoHeight);
+        : null;
     const id = randomUUID();
     const outputTemplate = path.join(downloadsDirectory, `${id}-%(title).180B.%(ext)s`);
-    console.log(`download ${id}: ${type} ${safeURLForLog(sourceURL)} quality=${qualityId}`);
+    console.log(`download ${id}: ${type} ${safeURLForLog(sourceURL)} quality=${qualitySelector || "auto"}`);
 
     const job = {
         id,
@@ -145,12 +145,10 @@ function handleCreateDownload(body, request, response) {
     if (type === "audio") {
         args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
     } else {
-        args.push(
-            "-f",
-            qualityId,
-            "--merge-output-format",
-            "mp4"
-        );
+        if (qualitySelector) {
+            args.push("-f", qualitySelector);
+        }
+        args.push("--merge-output-format", "mp4");
     }
 
     args.push(sourceURL);
@@ -355,7 +353,7 @@ function clampQualitySelector(selector) {
 function normalizeQualitySelector(selector) {
     const trimmedSelector = selector.trim();
     if (!trimmedSelector || trimmedSelector === "best") {
-        return videoFormatSelector(maxVideoHeight);
+        return null;
     }
 
     return clampQualitySelector(trimmedSelector);
