@@ -55,6 +55,9 @@ docker run --rm \
 - `QUALITIES_TIMEOUT_MS`: tempo maximo para listar qualidades com `yt-dlp`. Padrao: `60000`.
 - `YTDLP_PATH`: caminho customizado para `yt-dlp`.
 - `FFMPEG_PATH`: caminho customizado para `ffmpeg`.
+- `YTDLP_COOKIES_BASE64`: cookies exportados do navegador em formato Netscape, codificados em base64. Use quando YouTube retornar "Sign in to confirm you're not a bot".
+- `YTDLP_COOKIES`: mesma coisa, mas em texto puro. Prefira `YTDLP_COOKIES_BASE64` no Render.
+- `YTDLP_COOKIES_FILE`: caminho de um arquivo de cookies ja existente no servidor.
 
 ## Endpoints
 

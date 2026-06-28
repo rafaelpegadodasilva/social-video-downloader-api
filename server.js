@@ -11,6 +11,7 @@ const downloadsDirectory = process.env.DOWNLOADS_DIR
 const qualitiesTimeoutMs = Number(process.env.QUALITIES_TIMEOUT_MS || 60_000);
 const bundledToolsDirectory = path.join(__dirname, "tools");
 const jobs = new Map();
+const cookieFilePath = prepareCookieFile();
 const tools = resolveTools();
 
 fs.mkdirSync(downloadsDirectory, { recursive: true });
@@ -71,7 +72,13 @@ async function handleQualities(body, response) {
         const sourceURL = validateSourceURL(sourceURLFromBody(body));
         const formats = await runCommand(
             tools.ytDLP,
-            ["--no-warnings", "-F", "--no-playlist", sourceURL],
+            [
+                "--no-warnings",
+                ...ytDLPCookieArgs(),
+                "-F",
+                "--no-playlist",
+                sourceURL
+            ],
             { timeoutMs: qualitiesTimeoutMs }
         );
         const qualities = buildQualitiesFromFormatList(formats.stdout);
@@ -110,6 +117,7 @@ function handleCreateDownload(body, request, response) {
         "--no-playlist",
         "--newline",
         "--restrict-filenames",
+        ...ytDLPCookieArgs(),
         "--ffmpeg-location",
         path.dirname(tools.ffmpeg),
         "-o",
@@ -373,6 +381,30 @@ function validateSourceURL(value) {
 
 function sourceURLFromBody(body) {
     return body.url || body.link;
+}
+
+function prepareCookieFile() {
+    const explicitPath = process.env.YTDLP_COOKIES_FILE || process.env.YTDLP_COOKIES_PATH;
+    if (explicitPath) {
+        return explicitPath;
+    }
+
+    const encodedCookies = process.env.YTDLP_COOKIES_BASE64;
+    const plainCookies = process.env.YTDLP_COOKIES;
+    if (!encodedCookies && !plainCookies) {
+        return null;
+    }
+
+    const content = encodedCookies
+        ? Buffer.from(encodedCookies, "base64").toString("utf8")
+        : plainCookies;
+    const outputPath = path.join(process.env.RUNNER_TEMP || "/tmp", "yt-dlp-cookies.txt");
+    fs.writeFileSync(outputPath, content, { mode: 0o600 });
+    return outputPath;
+}
+
+function ytDLPCookieArgs() {
+    return cookieFilePath ? ["--cookies", cookieFilePath] : [];
 }
 
 function resolveTools() {
